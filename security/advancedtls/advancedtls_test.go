@@ -239,7 +239,7 @@ func (s) TestServerOptionsConfigErrorCases(t *testing.T) {
 				IdentityOptions:   test.IdentityOptions,
 				RootOptions:       test.RootOptions,
 			}
-			_, err := serverOptions.config()
+			_, err := serverOptions.config(nil)
 			if err == nil {
 				t.Fatalf("ServerOptions{%v}.config() returns no err, wantErr != nil", serverOptions)
 			}
@@ -286,7 +286,7 @@ func (s) TestServerOptionsConfigSuccessCases(t *testing.T) {
 				IdentityOptions:   test.IdentityOptions,
 				RootOptions:       test.RootOptions,
 			}
-			serverConfig, err := serverOptions.config()
+			serverConfig, err := serverOptions.config(nil)
 			if err != nil {
 				t.Fatalf("ServerOptions{%v}.config() = %v, wantErr == nil", serverOptions, err)
 			}
@@ -705,7 +705,7 @@ func (s) TestClientServerHandshake(t *testing.T) {
 					close(done)
 					return
 				}
-				serverTLS, err := NewServerCreds(serverOptions)
+				serverTLS, err := NewServerCreds(serverOptions, nil)
 				if err != nil {
 					serverRawConn.Close()
 					close(done)
@@ -728,19 +728,12 @@ func (s) TestClientServerHandshake(t *testing.T) {
 			}
 			defer conn.Close()
 			clientOptions := &ClientOptions{
-				IdentityOptions: IdentityCertificateOptions{
-					Certificates:                     test.clientCert,
-					GetIdentityCertificatesForClient: test.clientGetCert,
-					IdentityProvider:                 test.clientIdentityProvider,
-				},
-				VerifyPeer: test.clientVerifyFunc,
-				RootOptions: RootCertificateOptions{
-					RootCACerts:         test.clientRoot,
-					GetRootCertificates: test.clientGetRoot,
-					RootProvider:        test.clientRootProvider,
-				},
-				VType:            test.clientVType,
-				RevocationConfig: test.clientRevocationConfig,
+				IdentityOptions:    IdentityCertificateOptions{Certificates: test.clientCert, GetIdentityCertificatesForClient: test.clientGetCert, IdentityProvider: test.clientIdentityProvider},
+				VerifyPeer:         test.clientVerifyFunc,
+				ServerNameOverride: "",
+				RootOptions:        RootCertificateOptions{RootCACerts: test.clientRoot, GetRootCertificates: test.clientGetRoot, RootProvider: test.clientRootProvider},
+				VType:              test.clientVType,
+				RevocationConfig:   test.clientRevocationConfig,
 			}
 			clientTLS, err := NewClientCreds(clientOptions)
 			if err != nil {
@@ -849,7 +842,7 @@ func (s) TestGetCertificatesSNI(t *testing.T) {
 					},
 				},
 			}
-			serverConfig, err := serverOptions.config()
+			serverConfig, err := serverOptions.config(nil)
 			if err != nil {
 				t.Fatalf("serverOptions.config() failed: %v", err)
 			}
