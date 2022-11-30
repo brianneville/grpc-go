@@ -250,7 +250,7 @@ func (o *ClientOptions) config() (*tls.Config, error) {
 	}
 	if o.RootOptions.VerifiableRootCerts != nil &&
 		o.RootOptions.VerifiableRootCerts.nonNilFieldCount() != 2 {
-		return nil, fmt.Errorf("all fields in GetVerifiableRootCerts should be set")
+		return nil, fmt.Errorf("all fields in VerifiableRootCerts should be set")
 	}
 	if num := o.IdentityOptions.nonNilFieldCount(); num > 1 {
 		return nil, fmt.Errorf("at most one field in IdentityCertificateOptions could be specified")
@@ -335,7 +335,7 @@ func (o *ServerOptions) config(config *tls.Config) (*tls.Config, error) {
 	}
 	if o.RootOptions.VerifiableRootCerts != nil &&
 		o.RootOptions.VerifiableRootCerts.nonNilFieldCount() != 2 {
-		return nil, fmt.Errorf("all fields in GetVerifiableRootCerts should be set")
+		return nil, fmt.Errorf("all fields in VerifiableRootCerts should be set")
 	}
 	if num := o.IdentityOptions.nonNilFieldCount(); num > 1 {
 		return nil, fmt.Errorf("at most one field in IdentityCertificateOptions could be specified")
