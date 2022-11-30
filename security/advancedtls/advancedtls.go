@@ -66,6 +66,35 @@ type VerificationResults struct{}
 // returns an empty struct.
 type CustomVerificationFunc func(params *VerificationFuncParams) (*VerificationResults, error)
 
+// RootCAsFromParamsFunc is the function used by both RootCAGetters.GetRootCertificates
+// and RootCertificateOptions.GetRootCertificates
+type RootCAsFromParamsFunc func(params *GetRootCAsParams) (*GetRootCAsResults, error)
+
+// RootCAGetters contains functions that are used to retrieve certs for the connection.
+// For any usage of this struct, both fields must be set non-nil.
+type RootCAGetters struct {
+	// If GetRootCertificates is set, it will be invoked to obtain root certs for
+	// every new connection.
+	GetRootCertificates RootCAsFromParamsFunc
+	// If GetInitialRootCertificates is set, it will be used temporarily as the initial value of the
+	// root certs for the connection.
+	// This allows the server to set tls config with clientAuth = tls.RequireAndVerifyClientCert
+	// see: https://github.com/grpc/grpc-go/issues/5667
+	GetInitialRootCertificates func() (*x509.CertPool, error)
+}
+
+// nonNilFieldCount returns the number of set fields in RootCAGetters.
+func (r RootCAGetters) nonNilFieldCount() int {
+	cnt := 0
+	rv := reflect.ValueOf(r)
+	for i := 0; i < rv.NumField(); i++ {
+		if !rv.Field(i).IsNil() {
+			cnt++
+		}
+	}
+	return cnt
+}
+
 // GetRootCAsParams contains the parameters available to users when
 // implementing GetRootCAs.
 type GetRootCAsParams struct {
@@ -90,7 +119,10 @@ type RootCertificateOptions struct {
 	RootCACerts *x509.CertPool
 	// If GetRootCertificates is set, it will be invoked to obtain root certs for
 	// every new connection.
-	GetRootCertificates func(params *GetRootCAsParams) (*GetRootCAsResults, error)
+	GetRootCertificates RootCAsFromParamsFunc
+	// If VerifiableRootCerts is set, then its functions are used to retrieve the certs used
+	// for the connection
+	VerifiableRootCerts *RootCAGetters
 	// If RootProvider is set, we will use the root certs from the Provider's
 	// KeyMaterial() call in the new connections. The Provider must have initial
 	// credentials if specified. Otherwise, KeyMaterial() will block forever.
@@ -216,6 +248,10 @@ func (o *ClientOptions) config() (*tls.Config, error) {
 	if num := o.RootOptions.nonNilFieldCount(); num > 1 {
 		return nil, fmt.Errorf("at most one field in RootCertificateOptions could be specified")
 	}
+	if o.RootOptions.VerifiableRootCerts != nil &&
+		o.RootOptions.VerifiableRootCerts.nonNilFieldCount() != 2 {
+		return nil, fmt.Errorf("all fields in GetVerifiableRootCerts should be set")
+	}
 	if num := o.IdentityOptions.nonNilFieldCount(); num > 1 {
 		return nil, fmt.Errorf("at most one field in IdentityCertificateOptions could be specified")
 	}
@@ -236,6 +272,13 @@ func (o *ClientOptions) config() (*tls.Config, error) {
 		// In cases when users provide GetRootCertificates callback, since this
 		// callback is not contained in tls.Config, we have nothing to set here.
 		// We will invoke the callback in ClientHandshake.
+	case o.RootOptions.VerifiableRootCerts != nil:
+		o.RootOptions.GetRootCertificates = o.RootOptions.VerifiableRootCerts.GetRootCertificates
+		initialCAs, err := o.RootOptions.VerifiableRootCerts.GetInitialRootCertificates()
+		if err != nil {
+			return nil, err
+		}
+		config.RootCAs = initialCAs
 	case o.RootOptions.RootProvider != nil:
 		o.RootOptions.GetRootCertificates = func(*GetRootCAsParams) (*GetRootCAsResults, error) {
 			km, err := o.RootOptions.RootProvider.KeyMaterial(context.Background())
@@ -290,6 +333,10 @@ func (o *ServerOptions) config(config *tls.Config) (*tls.Config, error) {
 	if num := o.RootOptions.nonNilFieldCount(); num > 1 {
 		return nil, fmt.Errorf("at most one field in RootCertificateOptions could be specified")
 	}
+	if o.RootOptions.VerifiableRootCerts != nil &&
+		o.RootOptions.VerifiableRootCerts.nonNilFieldCount() != 2 {
+		return nil, fmt.Errorf("all fields in GetVerifiableRootCerts should be set")
+	}
 	if num := o.IdentityOptions.nonNilFieldCount(); num > 1 {
 		return nil, fmt.Errorf("at most one field in IdentityCertificateOptions could be specified")
 	}
@@ -312,6 +359,13 @@ func (o *ServerOptions) config(config *tls.Config) (*tls.Config, error) {
 		// In cases when users provide GetRootCertificates callback, since this
 		// callback is not contained in tls.Config, we have nothing to set here.
 		// We will invoke the callback in ServerHandshake.
+	case o.RootOptions.VerifiableRootCerts != nil:
+		o.RootOptions.GetRootCertificates = o.RootOptions.VerifiableRootCerts.GetRootCertificates
+		initialCAs, err := o.RootOptions.VerifiableRootCerts.GetInitialRootCertificates()
+		if err != nil {
+			return nil, err
+		}
+		config.ClientCAs = initialCAs
 	case o.RootOptions.RootProvider != nil:
 		o.RootOptions.GetRootCertificates = func(*GetRootCAsParams) (*GetRootCAsResults, error) {
 			km, err := o.RootOptions.RootProvider.KeyMaterial(context.Background())
