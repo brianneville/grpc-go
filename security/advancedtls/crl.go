@@ -444,28 +444,30 @@ func fetchCRL(rawIssuer []byte, cfg RevocationConfig) (*certificateListExt, erro
 			break
 		}
 
-		crl, err := parseRevocationList(crlBytes)
+		crls, crlRawDERs, err := parseRevocationList(crlBytes)
 		if err != nil {
 			// Parsing errors for a CRL shouldn't happen so fail.
 			return nil, fmt.Errorf("parseRevocationList(%v) failed: %v", crlPath, err)
 		}
-		var certList *certificateListExt
-		if certList, err = parseCRLExtensions(crl); err != nil {
-			grpclogLogger.Infof("fetchCRL: unsupported crl %v: %v", crlPath, err)
-			// Continue to find a supported CRL
-			continue
-		}
+		for j, crl := range crls {
+			var certList *certificateListExt
+			if certList, err = parseCRLExtensions(crl); err != nil {
+				grpclogLogger.Infof("fetchCRL: unsupported crl %v: %v", crlPath, err)
+				// Continue to find a supported CRL
+				continue
+			}
 
-		rawCRLIssuer, err := extractCRLIssuer(crlBytes)
-		if err != nil {
-			return nil, err
-		}
-		certList.RawIssuer = rawCRLIssuer
-		// RFC5280, 6.3.3 (b) Verify the issuer and scope of the complete CRL.
-		if bytes.Equal(rawIssuer, rawCRLIssuer) {
-			parsedCRL = certList
-			// Continue to find the highest number in the .rN suffix.
-			continue
+			rawCRLIssuer, err := extractCRLIssuer(crlRawDERs[j])
+			if err != nil {
+				return nil, err
+			}
+			certList.RawIssuer = rawCRLIssuer
+			// RFC5280, 6.3.3 (b) Verify the issuer and scope of the complete CRL.
+			if bytes.Equal(rawIssuer, rawCRLIssuer) {
+				parsedCRL = certList
+				// Continue to find the highest number in the .rN suffix.
+				continue
+			}
 		}
 	}
 
@@ -531,18 +533,50 @@ func hasExpired(crl *x509.RevocationList, now time.Time) bool {
 	return !now.Before(crl.NextUpdate)
 }
 
+var pemCRLPrefix = []byte("-----BEGIN X509 CRL-----")
+var pemCRLSuffix = []byte("-----END X509 CRL-----")
+
 // parseRevocationList comes largely from here
 // x509.go:
 // https://github.com/golang/go/blob/e2f413402527505144beea443078649380e0c545/src/crypto/x509/x509.go#L1669-L1690
 // We must first convert PEM to DER to be able to use the new
 // x509.ParseRevocationList instead of the deprecated x509.ParseCRL
-func parseRevocationList(crlBytes []byte) (*x509.RevocationList, error) {
-	if bytes.HasPrefix(crlBytes, crlPemPrefix) {
-		crlBytes = crlPemToDer(crlBytes)
+//
+// this function has been adapted to be able to parse PEM files which consist
+// of multiple CRLs (e.g. a file created by doing "cat crl0.pem crl1.pem > crlBoth.pem")
+func parseRevocationList(crlBytes []byte) ([]*x509.RevocationList, [][]byte, error) {
+
+	// simple case - we're not dealing with a PEM file:
+	if !bytes.HasPrefix(crlBytes, pemCRLPrefix) {
+		c, err := x509.ParseRevocationList(crlBytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []*x509.RevocationList{c}, [][]byte{crlBytes}, nil
 	}
-	crl, err := x509.ParseRevocationList(crlBytes)
-	if err != nil {
-		return nil, err
+
+	var crls []*x509.RevocationList // collected CRLs (parsed)
+	var crlRawDERs [][]byte         // collected CRLs (in DER format)
+
+	// We're dealing with (potentially multiple) PEM certs.
+	// Loop over the crlBytes, parsing every section of these bytes which corresponds to a CRL.
+	for nextStart := 0; nextStart < len(crlBytes); {
+		start := bytes.Index(crlBytes[nextStart:], pemCRLPrefix)
+		end := bytes.Index(crlBytes[nextStart:], pemCRLSuffix)
+		if start == -1 || end == -1 {
+			return nil, nil, fmt.Errorf("PEM CRL did not have %q prefix and %q suffix",
+				pemCRLPrefix, pemCRLSuffix)
+		}
+		block, _ := pem.Decode(crlBytes[start+nextStart : end+nextStart+len(pemCRLSuffix)])
+		if block != nil && block.Type == pemType {
+			c, err := x509.ParseRevocationList(block.Bytes)
+			if err != nil {
+				return nil, nil, err
+			}
+			crls = append(crls, c)
+			crlRawDERs = append(crlRawDERs, block.Bytes)
+		}
+		nextStart += end + len(pemCRLSuffix) + 1
 	}
-	return crl, nil
+	return crls, crlRawDERs, nil
 }

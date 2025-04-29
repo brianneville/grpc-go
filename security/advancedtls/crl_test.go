@@ -188,11 +188,11 @@ qsSIp8gfxSyzkJP+Ngkm2DdLjlJQCZ9R0MZP9Xj4
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			crl, err := parseRevocationList(tt.in)
+			crl, _, err := parseRevocationList(tt.in)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := parseCRLExtensions(crl); err == nil {
+			if _, err := parseCRLExtensions(crl[0]); err == nil {
 				t.Error("expected error got ok")
 			}
 		})
@@ -219,12 +219,12 @@ XmcN4lG1e4nx+xjzp7MySYO42NRY3LkphVzJhu3dRBYhBKViRJxw9hLttChitJpF
 6Kh6a0QzrEY/QDJGhE1VrAD2c5g/SKnHPDVoCWo4ACIICi76KQQSIWfIdp4W/SY3
 qsSIp8gfxSyzkJP+Ngkm2DdLjlJQCZ9R0MZP9Xj4
 -----END X509 CRL-----`)
-	crl, err := parseRevocationList(dummyCrlFile)
+	crl, _, err := parseRevocationList(dummyCrlFile)
 	if err != nil {
 		t.Fatalf("parseRevocationList(dummyCrlFile) failed: %v", err)
 	}
-	crlExt := &certificateListExt{CertList: crl}
-	var crlIssuer pkix.Name = crl.Issuer
+	crlExt := &certificateListExt{CertList: crl[0]}
+	var crlIssuer pkix.Name = crl[0].Issuer
 
 	var revocationTests = []struct {
 		desc    string
@@ -343,11 +343,11 @@ func loadCRL(t *testing.T, path string) *certificateListExt {
 	if err != nil {
 		t.Fatalf("readFile(%v) failed err = %v", path, err)
 	}
-	crl, err := parseRevocationList(b)
+	crl, _, err := parseRevocationList(b)
 	if err != nil {
 		t.Fatalf("parseCrl(%v) failed err = %v", path, err)
 	}
-	crlExt, err := parseCRLExtensions(crl)
+	crlExt, err := parseCRLExtensions(crl[0])
 	if err != nil {
 		t.Fatalf("parseCRLExtensions(%v) failed err = %v", path, err)
 	}
