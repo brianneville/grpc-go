@@ -301,7 +301,14 @@ func (o *ClientOptions) config() (*tls.Config, error) {
 	return config, nil
 }
 
-func (o *ServerOptions) config() (*tls.Config, error) {
+func (o *ServerOptions) config(config *tls.Config) (*tls.Config, error) {
+	if config == nil {
+		config = &tls.Config{
+			ClientAuth: tls.NoClientCert,
+			MinVersion: o.MinVersion,
+			MaxVersion: o.MaxVersion,
+		}
+	}
 	if o.RequireClientCert && o.VType == SkipVerification && o.VerifyPeer == nil {
 		return nil, fmt.Errorf("server needs to provide custom verification mechanism if choose to skip default verification, but require client certificate(s)")
 	}
@@ -319,17 +326,11 @@ func (o *ServerOptions) config() (*tls.Config, error) {
 	if o.MinVersion > o.MaxVersion {
 		return nil, fmt.Errorf("the minimum TLS version is larger than the maximum TLS version")
 	}
-	clientAuth := tls.NoClientCert
 	if o.RequireClientCert {
 		// We have to set clientAuth to RequireAnyClientCert to force underlying
 		// TLS package to use the verification function we built from
 		// buildVerifyFunc.
-		clientAuth = tls.RequireAnyClientCert
-	}
-	config := &tls.Config{
-		ClientAuth: clientAuth,
-		MinVersion: o.MinVersion,
-		MaxVersion: o.MaxVersion,
+		config.ClientAuth = tls.RequireAnyClientCert
 	}
 	// Propagate root-certificate-related fields in tls.Config.
 	switch {
@@ -414,7 +415,8 @@ func (c *advancedTLSCreds) ClientHandshake(ctx context.Context, authority string
 	if cfg.ServerName == "" {
 		cfg.ServerName = authority
 	}
-	cfg.VerifyPeerCertificate = buildVerifyFunc(c, cfg.ServerName, rawConn)
+	peerVerifiedChains := [][]*x509.Certificate{}
+	cfg.VerifyPeerCertificate = buildVerifyFunc(c, cfg.ServerName, rawConn, &peerVerifiedChains)
 	conn := tls.Client(rawConn, cfg)
 	errChannel := make(chan error, 1)
 	go func() {
@@ -438,12 +440,14 @@ func (c *advancedTLSCreds) ClientHandshake(ctx context.Context, authority string
 		},
 	}
 	info.SPIFFEID = credinternal.SPIFFEIDFromState(conn.ConnectionState())
+	info.State.VerifiedChains = peerVerifiedChains
 	return credinternal.WrapSyscallConn(rawConn, conn), info, nil
 }
 
 func (c *advancedTLSCreds) ServerHandshake(rawConn net.Conn) (net.Conn, credentials.AuthInfo, error) {
 	cfg := credinternal.CloneTLSConfig(c.config)
-	cfg.VerifyPeerCertificate = buildVerifyFunc(c, "", rawConn)
+	peerVerifiedChains := [][]*x509.Certificate{}
+	cfg.VerifyPeerCertificate = buildVerifyFunc(c, "", rawConn, &peerVerifiedChains)
 	conn := tls.Server(rawConn, cfg)
 	if err := conn.Handshake(); err != nil {
 		conn.Close()
@@ -456,6 +460,7 @@ func (c *advancedTLSCreds) ServerHandshake(rawConn net.Conn) (net.Conn, credenti
 		},
 	}
 	info.SPIFFEID = credinternal.SPIFFEIDFromState(conn.ConnectionState())
+	info.State.VerifiedChains = peerVerifiedChains
 	return credinternal.WrapSyscallConn(rawConn, conn), info, nil
 }
 
@@ -482,7 +487,8 @@ func (c *advancedTLSCreds) OverrideServerName(serverNameOverride string) error {
 //     to true.
 func buildVerifyFunc(c *advancedTLSCreds,
 	serverName string,
-	rawConn net.Conn) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	rawConn net.Conn,
+	peerVerifiedChains *[][]*x509.Certificate) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 		chains := verifiedChains
 		var leafCert *x509.Certificate
@@ -541,6 +547,7 @@ func buildVerifyFunc(c *advancedTLSCreds,
 				return err
 			}
 			leafCert = rawCertList[0]
+			*peerVerifiedChains = chains
 		}
 		// Perform certificate revocation check if specified.
 		if c.revocationConfig != nil {
@@ -587,8 +594,8 @@ func NewClientCreds(o *ClientOptions) (credentials.TransportCredentials, error) 
 
 // NewServerCreds uses ServerOptions to construct a TransportCredentials based
 // on TLS.
-func NewServerCreds(o *ServerOptions) (credentials.TransportCredentials, error) {
-	conf, err := o.config()
+func NewServerCreds(o *ServerOptions, config *tls.Config) (credentials.TransportCredentials, error) {
+	conf, err := o.config(config)
 	if err != nil {
 		return nil, err
 	}
